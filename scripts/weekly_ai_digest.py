@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urljoin
 import feedparser
 import httpx
 import trafilatura
@@ -116,12 +117,91 @@ _AI_HINTS = (
     "火山引擎",
     "华为",
     "小米",
+    "meta",
+    "xai",
+    "grok",
+    "anthropic",
+    "google",
+    "alphabet",
+    "sam altman",
+    "奥特曼",
+    "黄仁勋",
+    "jensen",
+    "英伟达",
+    "字节跳动",
+    "飞书",
+    "文心一言",
 )
 
 
 def is_ai_related(title: str, summary: str, link: str) -> bool:
     blob = f"{title} {summary} {link}".lower()
     return any(h in blob for h in _AI_HINTS)
+
+
+def content_importance_level(title: str, summary: str, link: str) -> int:
+    """
+    内容重要程度（数字越小越优先）：
+    等级一：大模型 / 多模态 / Agent / AI 工具
+    等级二：字节、阿里、腾讯、华为、百度、OpenAI、Anthropic、Google、Meta、xAI 等公司的 AI 动作
+    等级三：AI 行业动态，以及马斯克、Sam Altman、黄仁勋等关键人物相关 AI 动态
+
+    关键人物仅在标题+摘要中判断，避免链接域名（如 openai.com）把人物稿误判为等级二。
+    """
+    core = f"{title} {summary}".lower()
+    blob = f"{core} {link}".lower()
+
+    l1 = re.search(
+        r"(大模型|多模态|multimodal|视觉语言|vlm|vla|"
+        r"智能体|agentic|\bagent\b|"
+        r"ai工具|ai 工具|工具链|workflow|"
+        r"rag|检索增强|知识库|embedding|向量|微调|"
+        r"推理|inference|训练|sota|benchmark|"
+        r"gpt|claude|gemini|foundation model|llm|large language|"
+        r"模型发布|开源模型|computer use|computer-use|tool use|mcp|copilot|插件|"
+        r"benchmark|benchmarks)",
+        blob,
+        re.I,
+    )
+    if l1:
+        return 1
+
+    l3_people = re.search(
+        r"(马斯克|musk|黄仁勋|jensen|altman|奥特曼|sam altman|amodei|"
+        r"扎克伯格|zuckerberg|梁文锋)",
+        core,
+        re.I,
+    )
+    if l3_people:
+        return 3
+
+    l2 = re.search(
+        r"(字节|bytedance|阿里|alibaba|腾讯|tencent|微信|wechat|"
+        r"华为|huawei|鸿蒙|"
+        r"百度|baidu|ernie|文心|"
+        r"openai|anthropic|google|deepmind|alphabet|gemini|"
+        r"meta|xai|grok|"
+        r"火山引擎|飞书|钉钉|"
+        r"通义|千问|豆包|混元|盘古|kimi|月之暗面|minimax|"
+        r"英伟达|nvidia)",
+        blob,
+        re.I,
+    )
+    if l2:
+        return 2
+
+    l3_ind = re.search(
+        r"(行业|市场趋势|趋势|报告|洞察|融资|并购|政策|监管|访谈|年会|展望|市场份额)",
+        core,
+        re.I,
+    )
+    if l3_ind:
+        return 3
+
+    return 3
+
+
+_IMPORTANCE_LABEL = {1: "等级一", 2: "等级二", 3: "等级三"}
 
 
 def classify_item(title: str, summary: str, source: str) -> str:
@@ -131,7 +211,10 @@ def classify_item(title: str, summary: str, source: str) -> str:
         return "融资合作"
     if re.search(r"(政策|监管|条例|征求意见|合规|版权|治理|指引|办法|法案|行政令)", blob):
         return "政策"
-    if re.search(r"(马斯克|musk|黄仁勋|jensen|altman|奥特曼|amodei|nadella|扎克伯格|zuckerberg|梁文锋)", blob):
+    if re.search(
+        r"(马斯克|musk|黄仁勋|jensen|altman|奥特曼|sam altman|amodei|nadella|扎克伯格|zuckerberg|梁文锋)",
+        blob,
+    ):
         return "人物动态"
     if re.search(r"(发布|上线|开源|模型|大模型|多模态|参数|推理|训练|sota|benchmark|gpt|qwen|glm|ernie|pangu|doubao|hunyuan|gemini|claude)", blob):
         return "模型发布"
@@ -141,16 +224,17 @@ def classify_item(title: str, summary: str, source: str) -> str:
 
 
 def recommend_item(tier: str, title: str, summary: str, popularity: int, published: datetime) -> tuple[bool, str]:
-    """返回(是否建议入选, 理由)"""
+    """返回(是否建议入选, 理由)。理由仅用于候选池/日志，勿写入飞书卡片正文。"""
     cat = classify_item(title, summary, "")
     blob = f"{title} {summary}".lower()
     # 旧闻翻炒：超过 7 天会被上游 cutoff 拦截，这里不再处理
     if tier.upper() == "A":
-        return True, f"A类官方一手来源，且属于「{cat}」。"
+        return True, f"A 类官方一手来源，归类为「{cat}」。"
     # B 类：需要更“主线/热”
     strong = (
         "智能体",
         "agent",
+        "agentic",
         "大模型",
         "多模态",
         "qwen",
@@ -166,6 +250,16 @@ def recommend_item(tier: str, title: str, summary: str, popularity: int, publish
         "黄仁勋",
         "马斯克",
         "musk",
+        "altman",
+        "字节",
+        "阿里",
+        "腾讯",
+        "华为",
+        "百度",
+        "meta",
+        "xai",
+        "grok",
+        "anthropic",
         "火山引擎",
         "混元",
         "盘古",
@@ -176,11 +270,11 @@ def recommend_item(tier: str, title: str, summary: str, popularity: int, publish
     )
     hit = sum(1 for k in strong if k.lower() in blob)
     if hit >= 2:
-        return True, f"命中多项主线关键词({hit})，且属于「{cat}」。"
+        return True, f"命中多个主线主题（大模型/多模态/智能体/大厂动态等），归类为「{cat}」。"
     if popularity and popularity >= 20000:
-        return True, f"热度指标较高(pop={popularity})，且属于「{cat}」。"
+        return True, f"热度指标较高，归类为「{cat}」。"
     if cat in ("模型发布", "融资合作", "政策") and hit >= 1:
-        return True, f"属于高价值类别「{cat}」，且命中主线关键词。"
+        return True, f"高价值类别「{cat}」，且命中主线主题。"
     return False, f"相对偏泛或主线命中不足（类别：{cat}）。"
 
 
@@ -336,6 +430,50 @@ def collect_aibase_news(url: str, limit: int = 30) -> list[dict[str, Any]]:
         if len(out) >= limit:
             break
     # 弱热度：越靠前越热
+    for idx, it in enumerate(out):
+        it["popularity"] = max(0, limit - idx)
+    return out
+
+
+def collect_openai_zh_news(url: str, limit: int = 40) -> list[dict[str, Any]]:
+    """抓取 OpenAI 中文资讯列表页（不依赖 RSS）。若遇 Cloudflare 挑战则返回空列表。"""
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+    try:
+        with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True, headers=headers) as client:
+            r = client.get(url)
+            r.raise_for_status()
+            raw = r.text
+    except Exception:
+        return []
+
+    if "Just a moment" in raw or "cf-challenge" in raw.lower() or "_cf_chl_opt" in raw:
+        return []
+
+    soup = BeautifulSoup(raw, "lxml")
+    base = "https://openai.com"
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for a in soup.find_all("a", href=True):
+        href = (a.get("href") or "").strip()
+        if not href.startswith("http"):
+            href = urljoin(base, href)
+        if "openai.com" not in href:
+            continue
+        if "/zh-Hans-CN/" not in href:
+            continue
+        if href.rstrip("/") == url.rstrip("/"):
+            continue
+        if re.search(r"/zh-Hans-CN/news/?$", href):
+            continue
+        title = strip_html(a.get_text(" "))
+        if len(title) < 6:
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+        out.append({"rss_title": title, "link": href, "rss_summary": ""})
+        if len(out) >= limit:
+            break
     for idx, it in enumerate(out):
         it["popularity"] = max(0, limit - idx)
     return out
@@ -714,6 +852,31 @@ def main() -> int:
                 time.sleep(0.3)
             continue
 
+        if kind == "openai_zh_html":
+            for it in collect_openai_zh_news(url, limit=40):
+                link = it["link"]
+                title = it["rss_title"]
+                rss_sum = it.get("rss_summary", "")
+                if not is_ai_related(title, rss_sum, link):
+                    continue
+                dt = fetch_page_published(link) or now
+                if dt < cutoff:
+                    continue
+                candidates.append(
+                    {
+                        "link": link,
+                        "rss_title": title,
+                        "published": dt,
+                        "feed_label": label,
+                        "tier": tier,
+                        "priority": prio,
+                        "popularity": int(it.get("popularity") or 0),
+                        "entry": None,
+                    }
+                )
+                time.sleep(0.3)
+            continue
+
         # 默认 RSS
         try:
             parsed = feedparser.parse(url)
@@ -768,6 +931,16 @@ def main() -> int:
             "黄仁勋",
             "马斯克",
             "musk",
+            "altman",
+            "字节",
+            "阿里",
+            "腾讯",
+            "华为",
+            "百度",
+            "meta",
+            "xai",
+            "grok",
+            "anthropic",
             "火山引擎",
             "混元",
             "盘古",
@@ -794,7 +967,11 @@ def main() -> int:
         if pop > 0:
             pop_adj = 20.0 * (1.0 + (pop ** 0.5) / 100.0)
         kw = float(_kw_bonus(c["rss_title"], rss_fallback_summary(c["entry"]) if c.get("entry") else "", c["link"]))
-        return recency + tier_bonus + pr * 1000.0 + pop_adj * 1000.0 + kw * 1000.0
+        rss_sum = rss_fallback_summary(c["entry"]) if c.get("entry") else ""
+        imp = content_importance_level(c["rss_title"], rss_sum, c["link"])
+        # 等级一 > 二 > 三，权重远大于单条时间差（秒级）
+        imp_bonus = float(4 - imp) * 1e12
+        return imp_bonus + recency + tier_bonus + pr * 1000.0 + pop_adj * 1000.0 + kw * 1000.0
 
     candidates.sort(key=_score, reverse=True)
 
@@ -829,6 +1006,8 @@ def main() -> int:
 
         cat = classify_item(display_title, summ, c["feed_label"])
         rec, reason = recommend_item(str(c.get("tier") or "B"), display_title, summ, int(c.get("popularity") or 0), c["published"])
+        imp = content_importance_level(display_title, summ, link)
+        po = len(candidate_rows)
         candidate_rows.append(
             {
                 "title": display_title,
@@ -836,16 +1015,23 @@ def main() -> int:
                 "source": c["feed_label"],
                 "tier": c.get("tier") or "B",
                 "category": cat,
+                "importance_level": imp,
+                "importance_label": _IMPORTANCE_LABEL.get(imp, "等级三"),
                 "recommended": "是" if rec else "否",
                 "reason": reason,
+                "one_line": summ,
                 "url": link,
                 "popularity": int(c.get("popularity") or 0),
+                "pool_order": po,
             }
         )
 
         # 先堆 20 条候选池
         if len(candidate_rows) >= 20:
             break
+
+    # 按「重要程度」优先，同级保持抓取顺序（已由上游 _score 大致保证新优先）
+    candidate_rows.sort(key=lambda x: (x["importance_level"], x["pool_order"]))
 
     # 候选池模式：仅输出候选池 20 条，不发飞书
     if args.mode == "candidates":
@@ -862,6 +1048,7 @@ def main() -> int:
             md_lines.append(f"- 时间：{it['time']}")
             md_lines.append(f"- 来源：{it['source']}（{it['tier']}）")
             md_lines.append(f"- 分类：{it['category']}")
+            md_lines.append(f"- 重要程度：{it.get('importance_label', '')}（{it.get('importance_level', '')}）")
             md_lines.append(f"- 建议入选：{it['recommended']}")
             md_lines.append(f"- 理由：{it['reason']}")
             md_lines.append(f"- 链接：{it['url']}")
@@ -871,15 +1058,19 @@ def main() -> int:
         print(json.dumps({"mode": "candidates", "count": len(candidate_rows), "json": "out/candidates.json", "md": "out/candidates.md"}, ensure_ascii=False))
         return 0
 
-    # weekly 模式：从候选池里精选 5 条
+    # weekly 模式：从候选池里精选 5 条（同等级内按 pool_order）
     picked = [x for x in candidate_rows if x["recommended"] == "是"]
-    # 不足 5 条则用剩余候选按 score 递补
+    picked.sort(key=lambda x: (x["importance_level"], x["pool_order"]))
+    # 不足 5 条则用剩余候选按重要程度递补
     if len(picked) < MAX_ITEMS:
         remaining = [x for x in candidate_rows if x["recommended"] == "否"]
+        remaining.sort(key=lambda x: (x["importance_level"], x["pool_order"]))
         picked.extend(remaining[: MAX_ITEMS - len(picked)])
     picked = picked[:MAX_ITEMS]
     for it in picked:
-        out.append({"title": it["title"], "summary": f"{it['category']}｜{it['reason']}", "url": it["url"], "source": it["source"]})
+        one = (it.get("one_line") or "").strip()
+        card_summary = f"{it['category']}｜{one}" if one else it["category"]
+        out.append({"title": it["title"], "summary": card_summary, "url": it["url"], "source": it["source"]})
 
     if ZoneInfo:
         local_now = datetime.now(BEIJING)

@@ -3,16 +3,23 @@
 # 说明：
 # - 尽量用站点官方 RSS；少量站点若无官方 RSS，可用公开的公众号转 RSS（第三方）补齐。
 # - 若某源偶发不可用，可先降低 priority 或注释掉。
+# - OpenAI 中文资讯页：见下方 kind: openai_zh_html（列表页若遇 Cloudflare 拦截可能为空，可依赖 OpenAI 英文 RSS）。
+# - Anthropic 官网：https://www.anthropic.com/news 与下方 RSS 一致。
 
 feeds:
   # --- A 类：官方一手来源（优先最高，抓“真更新”）---
   - url: https://openai.com/news/rss.xml
-    label: OpenAI Newsroom
+    label: OpenAI Newsroom（英文 RSS）
     priority: 100
     tier: A
   - url: https://www.anthropic.com/rss.xml
-    label: Anthropic News
+    label: Anthropic Newsroom（官网 RSS）
     priority: 100
+    tier: A
+  - url: https://openai.com/zh-Hans-CN/news/
+    label: OpenAI 中文资讯
+    priority: 99
+    kind: openai_zh_html
     tier: A
   - url: https://deepmind.google/blog/rss.xml
     label: Google DeepMind
