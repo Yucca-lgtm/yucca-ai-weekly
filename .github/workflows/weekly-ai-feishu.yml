@@ -36,6 +36,8 @@ jobs:
 
       - name: Run digest and push to Feishu
         env:
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           MYMEMORY_EMAIL: ${{ secrets.MYMEMORY_EMAIL }}
+          FEISHU_CARD_TEMPLATE_ID: ${{ secrets.FEISHU_CARD_TEMPLATE_ID }}
+          FEISHU_CARD_TEMPLATE_VERSION: ${{ secrets.FEISHU_CARD_TEMPLATE_VERSION }}
         run: python scripts/weekly_ai_digest.py
