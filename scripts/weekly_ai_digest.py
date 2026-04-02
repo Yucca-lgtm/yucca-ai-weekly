@@ -298,51 +298,85 @@ def excerpt_to_zh_one_line(excerpt: str) -> str:
     return f"【摘要暂以英文呈现】{short}"
 
 
-def feishu_send_post_zh_cn(
+def _escape_md(text: str) -> str:
+    # 飞书卡片 markdown 对特殊字符较宽容，这里做最基础的清理，避免换行失控。
+    return (text or "").replace("\r", "").strip()
+
+
+def feishu_send_card_zh_cn(
     webhook: str,
     title: str,
     items: list[dict[str, str]] | None = None,
     notice: str | None = None,
 ) -> None:
     """
-    使用飞书「post」富文本消息，支持加粗与可点击链接。
-    items: [{title, source, summary, url}]
+    使用飞书消息卡片（schema 2.0）发送，排版更清爽：
+    - 标题/每条资讯标题加粗
+    - 来源用灰色
+    - 每条之间用 divider 分隔，避免拥挤
     """
-    content: list[list[dict[str, Any]]] = []
+    elements: list[dict[str, Any]] = []
 
     if notice:
-        content.append([{"tag": "text", "text": notice}])
+        elements.append(
+            {
+                "tag": "markdown",
+                "content": _escape_md(notice),
+                "text_size": "normal_v2",
+            }
+        )
     else:
         assert items is not None
         for i, it in enumerate(items, 1):
-            # 标题（加粗）
-            content.append(
-                [
-                    {"tag": "text", "text": f"{i}. ", "style": ["bold"]},
-                    {"tag": "text", "text": f"《{it['title']}》", "style": ["bold"]},
-                ]
-            )
-            # 来源
-            if it.get("source"):
-                content.append([{"tag": "text", "text": f"来源：{it['source']}"}])
-            # 一句话摘要
-            if it.get("summary"):
-                content.append([{"tag": "text", "text": it["summary"]}])
-            # 原文链接（可点击）
-            url = it.get("url", "").strip()
+            t = _escape_md(it.get("title", ""))
+            s = _escape_md(it.get("source", ""))
+            summ = _escape_md(it.get("summary", ""))
+            url = _escape_md(it.get("url", ""))
+
+            # 资讯块：标题（加粗）+ 来源（灰）+ 摘要 + 链接
+            md_lines = [f"**{i}. 《{t}》**"]
+            if s:
+                md_lines.append(f"<font color='grey'>来源：{s}</font>")
+            if summ:
+                md_lines.append(summ)
             if url:
-                content.append([{"tag": "a", "text": url, "href": url}])
-            content.append([{"tag": "text", "text": ""}])
+                md_lines.append(f"[查看原文]({url})")
+
+            elements.append(
+                {
+                    "tag": "markdown",
+                    "content": "\n".join(md_lines),
+                    "text_size": "normal_v2",
+                    "text_align": "left",
+                }
+            )
+
+            # 分隔线（最后一条不加）
+            if i != len(items):
+                elements.append({"tag": "divider"})
 
     body = {
-        "msg_type": "post",
-        "content": {
-            "post": {
-                "zh_cn": {
-                    "title": title,
-                    "content": content,
-                }
-            }
+        "msg_type": "interactive",
+        "card": {
+            "schema": "2.0",
+            "config": {
+                "update_multi": True,
+                "style": {
+                    "text_size": {
+                        "normal_v2": {"default": "normal", "pc": "normal", "mobile": "heading"}
+                    }
+                },
+            },
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": "blue",
+                "padding": "12px 12px 12px 12px",
+            },
+            "body": {
+                "direction": "vertical",
+                "padding": "12px 12px 12px 12px",
+                "elements": elements,
+            },
         },
     }
 
@@ -463,11 +497,11 @@ def main() -> int:
 
     if not out:
         notice = "本周未从已配置 RSS 中筛出足够新且标题校验通过的 AI 条目，请检查 config/rss_feeds.yaml 或网络。"
-        feishu_send_post_zh_cn(webhook, title=post_title, notice=notice)
+        feishu_send_card_zh_cn(webhook, title=post_title, notice=notice)
         print("Sent empty week notice.")
         return 0
 
-    feishu_send_post_zh_cn(webhook, title=post_title, items=out)
+    feishu_send_card_zh_cn(webhook, title=post_title, items=out)
     print(json.dumps({"ok": True, "count": len(out)}, ensure_ascii=False))
     return 0
 
