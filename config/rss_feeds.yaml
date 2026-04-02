@@ -1,0 +1,53 @@
+# 免费 RSS：优先选用全球 AI 行业流量与公信力常居前列的媒体/机构官方源。
+# priority：0–100，数值越大越优先（与发布时间共同决定「热点」排序：先按新，再按来源权重）。
+# 可按团队偏好增删；失效链接请自行替换为站点当前提供的 RSS。
+
+feeds:
+  # --- 一线通讯社 / 头部科技媒体（全球流量与引用率常居前；均为免费公开 RSS）---
+  - url: https://feeds.bbci.co.uk/news/technology/rss.xml
+    label: BBC 科技
+    priority: 93
+  - url: https://www.theguardian.com/technology/rss
+    label: The Guardian 科技
+    priority: 91
+  - url: https://www.technologyreview.com/topic/artificial-intelligence/feed/
+    label: MIT Technology Review（AI）
+    priority: 93
+  - url: https://techcrunch.com/category/artificial-intelligence/feed/
+    label: TechCrunch AI
+    priority: 91
+  - url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+    label: The Verge（AI）
+    priority: 90
+  - url: https://venturebeat.com/category/ai/feed/
+    label: VentureBeat AI
+    priority: 88
+  - url: https://arstechnica.com/tag/artificial-intelligence/feed/
+    label: Ars Technica（AI）
+    priority: 86
+  - url: https://www.wired.com/feed/tag/ai/latest/rss
+    label: WIRED（AI）
+    priority: 85
+  - url: https://www.zdnet.com/topic/artificial-intelligence/rss.xml
+    label: ZDNet（AI）
+    priority: 84
+  - url: https://spectrum.ieee.org/topic/artificial-intelligence/rss/
+    label: IEEE Spectrum（AI）
+    priority: 83
+
+  # --- 厂商与实验室官方（产品/研究首发）---
+  - url: https://openai.com/news/rss.xml
+    label: OpenAI
+    priority: 92
+  - url: https://deepmind.google/blog/rss.xml
+    label: Google DeepMind
+    priority: 90
+  - url: https://blog.google/technology/ai/rss/
+    label: Google AI Blog
+    priority: 89
+  - url: https://www.anthropic.com/rss.xml
+    label: Anthropic
+    priority: 89
+  - url: https://nvidianews.nvidia.com/rss.xml
+    label: NVIDIA News
+    priority: 88
