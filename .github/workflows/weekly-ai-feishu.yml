@@ -14,6 +14,15 @@ on:
     # UTC 周五 02:00 = 北京时间周五 10:00
     - cron: "0 2 * * 5"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "weekly=精选5条并发飞书；candidates=仅生成候选池20条（不发群）"
+        required: true
+        default: "weekly"
+        type: choice
+        options:
+          - weekly
+          - candidates
 
 jobs:
   send:
@@ -36,8 +45,17 @@ jobs:
 
       - name: Run digest and push to Feishu
         env:
-           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           MYMEMORY_EMAIL: ${{ secrets.MYMEMORY_EMAIL }}
           FEISHU_CARD_TEMPLATE_ID: ${{ secrets.FEISHU_CARD_TEMPLATE_ID }}
           FEISHU_CARD_TEMPLATE_VERSION: ${{ secrets.FEISHU_CARD_TEMPLATE_VERSION }}
-        run: python scripts/weekly_ai_digest.py
+        run: python scripts/weekly_ai_digest.py --mode "${{ github.event.inputs.mode || 'weekly' }}"
+
+      - name: Upload candidates artifacts (only for candidates mode)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'candidates' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidates
+          path: |
+            out/candidates.json
+            out/candidates.md

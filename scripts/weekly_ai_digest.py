@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import argparse
 import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -36,7 +37,7 @@ except ImportError:
 BEIJING = ZoneInfo("Asia/Shanghai") if ZoneInfo else timezone(timedelta(hours=8))
 
 TITLE_MATCH_MIN = 72  # RSS 标题与页面标题相似度阈值（0-100）
-MAX_ITEMS = 8
+MAX_ITEMS = 5  # 每周五发 5 条精选
 FETCH_TIMEOUT = 25.0
 USER_AGENT = (
     "WeeklyAIDigest/1.0 (+https://github.com/actions; compatible; research bot)"
@@ -121,6 +122,66 @@ _AI_HINTS = (
 def is_ai_related(title: str, summary: str, link: str) -> bool:
     blob = f"{title} {summary} {link}".lower()
     return any(h in blob for h in _AI_HINTS)
+
+
+def classify_item(title: str, summary: str, source: str) -> str:
+    """公司动态/模型发布/AI工具/融资合作/人物动态/政策"""
+    blob = f"{title} {summary} {source}".lower()
+    if re.search(r"(融资|估值|a轮|b轮|c轮|种子轮|天使轮|投资|并购|收购|合作|战略合作|签约)", blob):
+        return "融资合作"
+    if re.search(r"(政策|监管|条例|征求意见|合规|版权|治理|指引|办法|法案|行政令)", blob):
+        return "政策"
+    if re.search(r"(马斯克|musk|黄仁勋|jensen|altman|奥特曼|amodei|nadella|扎克伯格|zuckerberg|梁文锋)", blob):
+        return "人物动态"
+    if re.search(r"(发布|上线|开源|模型|大模型|多模态|参数|推理|训练|sota|benchmark|gpt|qwen|glm|ernie|pangu|doubao|hunyuan|gemini|claude)", blob):
+        return "模型发布"
+    if re.search(r"(工具|插件|工作流|agent|智能体|copilot|IDE|办公|文档|表格|ppt|自动化|RAG|知识库)", blob):
+        return "AI工具"
+    return "公司动态"
+
+
+def recommend_item(tier: str, title: str, summary: str, popularity: int, published: datetime) -> tuple[bool, str]:
+    """返回(是否建议入选, 理由)"""
+    cat = classify_item(title, summary, "")
+    blob = f"{title} {summary}".lower()
+    # 旧闻翻炒：超过 7 天会被上游 cutoff 拦截，这里不再处理
+    if tier.upper() == "A":
+        return True, f"A类官方一手来源，且属于「{cat}」。"
+    # B 类：需要更“主线/热”
+    strong = (
+        "智能体",
+        "agent",
+        "大模型",
+        "多模态",
+        "qwen",
+        "千问",
+        "glm",
+        "智谱",
+        "豆包",
+        "doubao",
+        "openai",
+        "claude",
+        "gemini",
+        "nvidia",
+        "黄仁勋",
+        "马斯克",
+        "musk",
+        "火山引擎",
+        "混元",
+        "盘古",
+        "文心",
+        "ernie",
+        "ai办公",
+        "ai 办公",
+    )
+    hit = sum(1 for k in strong if k.lower() in blob)
+    if hit >= 2:
+        return True, f"命中多项主线关键词({hit})，且属于「{cat}」。"
+    if popularity and popularity >= 20000:
+        return True, f"热度指标较高(pop={popularity})，且属于「{cat}」。"
+    if cat in ("模型发布", "融资合作", "政策") and hit >= 1:
+        return True, f"属于高价值类别「{cat}」，且命中主线关键词。"
+    return False, f"相对偏泛或主线命中不足（类别：{cat}）。"
 
 
 def load_feeds(path: str) -> list[dict[str, Any]]:
@@ -569,6 +630,15 @@ def feishu_send_card_zh_cn(
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode",
+        choices=["weekly", "candidates"],
+        default="weekly",
+        help="weekly: 选 5 条并发飞书；candidates: 仅输出候选池 20 条到日志/附件",
+    )
+    args = parser.parse_args()
+
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     config_path = os.path.join(root, "config", "rss_feeds.yaml")
     webhook = os.environ.get("FEISHU_WEBHOOK", "").strip()
@@ -584,6 +654,7 @@ def main() -> int:
     for feed in feeds:
         url = feed.get("url")
         label = feed.get("label", "")
+        tier = str(feed.get("tier") or "B").strip().upper()
         if not url:
             continue
         try:
@@ -609,6 +680,7 @@ def main() -> int:
                         "rss_title": title,
                         "published": dt,
                         "feed_label": label,
+                        "tier": tier,
                         "priority": prio,
                         "popularity": int(it.get("popularity") or 0),
                         "entry": None,
@@ -633,6 +705,7 @@ def main() -> int:
                         "rss_title": title,
                         "published": dt,
                         "feed_label": label,
+                        "tier": tier,
                         "priority": prio,
                         "popularity": int(it.get("popularity") or 0),
                         "entry": None,
@@ -664,6 +737,7 @@ def main() -> int:
                     "rss_title": title,
                     "published": dt,
                     "feed_label": label,
+                    "tier": tier,
                     "priority": prio,
                     "popularity": 0,
                     "entry": entry,
@@ -671,7 +745,7 @@ def main() -> int:
             )
         time.sleep(0.3)
 
-    # 热点排序：发布时间（新） + 来源权重 + 热度（阅读/榜单/位置） + 主题关键词命中
+    # 热点排序：发布时间（新） + A类优先 + 来源权重 + 热度（阅读/榜单/位置） + 主题关键词命中
     def _kw_bonus(title: str, summary: str, link: str) -> int:
         blob = f"{title} {summary} {link}".lower()
         # 你关心的高权重主题
@@ -714,17 +788,19 @@ def main() -> int:
         recency = c["published"].timestamp()
         pr = float(c.get("priority") or 0)
         pop = float(c.get("popularity") or 0)
+        tier_bonus = 50_000.0 if str(c.get("tier") or "").upper() == "A" else 0.0
         # 让 pop 不至于把“新消息”完全碾压：做 log 压缩
         pop_adj = 0.0
         if pop > 0:
             pop_adj = 20.0 * (1.0 + (pop ** 0.5) / 100.0)
         kw = float(_kw_bonus(c["rss_title"], rss_fallback_summary(c["entry"]) if c.get("entry") else "", c["link"]))
-        return recency + pr * 1000.0 + pop_adj * 1000.0 + kw * 1000.0
+        return recency + tier_bonus + pr * 1000.0 + pop_adj * 1000.0 + kw * 1000.0
 
     candidates.sort(key=_score, reverse=True)
 
     seen: set[str] = set()
     out: list[dict[str, str]] = []
+    candidate_rows: list[dict[str, Any]] = []
     for c in candidates:
         link = c["link"]
         if link in seen:
@@ -751,16 +827,59 @@ def main() -> int:
             raw_excerpt = rss_sum
         summ = excerpt_to_zh_one_line(raw_excerpt)
 
-        out.append(
+        cat = classify_item(display_title, summ, c["feed_label"])
+        rec, reason = recommend_item(str(c.get("tier") or "B"), display_title, summ, int(c.get("popularity") or 0), c["published"])
+        candidate_rows.append(
             {
                 "title": display_title,
-                "summary": summ,
-                "url": link,
+                "time": c["published"].astimezone(BEIJING).strftime("%Y-%m-%d %H:%M"),
                 "source": c["feed_label"],
+                "tier": c.get("tier") or "B",
+                "category": cat,
+                "recommended": "是" if rec else "否",
+                "reason": reason,
+                "url": link,
+                "popularity": int(c.get("popularity") or 0),
             }
         )
-        if len(out) >= MAX_ITEMS:
+
+        # 先堆 20 条候选池
+        if len(candidate_rows) >= 20:
             break
+
+    # 候选池模式：仅输出候选池 20 条，不发飞书
+    if args.mode == "candidates":
+        # 输出到 Actions 日志（简洁）+ 生成附件文件
+        out_dir = os.path.join(root, "out")
+        os.makedirs(out_dir, exist_ok=True)
+        json_path = os.path.join(out_dir, "candidates.json")
+        md_path = os.path.join(out_dir, "candidates.md")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(candidate_rows, f, ensure_ascii=False, indent=2)
+        md_lines = [f"# 候选池（近7天）共 {len(candidate_rows)} 条", ""]
+        for i, it in enumerate(candidate_rows, 1):
+            md_lines.append(f"## {i}. {it['title']}")
+            md_lines.append(f"- 时间：{it['time']}")
+            md_lines.append(f"- 来源：{it['source']}（{it['tier']}）")
+            md_lines.append(f"- 分类：{it['category']}")
+            md_lines.append(f"- 建议入选：{it['recommended']}")
+            md_lines.append(f"- 理由：{it['reason']}")
+            md_lines.append(f"- 链接：{it['url']}")
+            md_lines.append("")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(md_lines).strip() + "\n")
+        print(json.dumps({"mode": "candidates", "count": len(candidate_rows), "json": "out/candidates.json", "md": "out/candidates.md"}, ensure_ascii=False))
+        return 0
+
+    # weekly 模式：从候选池里精选 5 条
+    picked = [x for x in candidate_rows if x["recommended"] == "是"]
+    # 不足 5 条则用剩余候选按 score 递补
+    if len(picked) < MAX_ITEMS:
+        remaining = [x for x in candidate_rows if x["recommended"] == "否"]
+        picked.extend(remaining[: MAX_ITEMS - len(picked)])
+    picked = picked[:MAX_ITEMS]
+    for it in picked:
+        out.append({"title": it["title"], "summary": f"{it['category']}｜{it['reason']}", "url": it["url"], "source": it["source"]})
 
     if ZoneInfo:
         local_now = datetime.now(BEIJING)
