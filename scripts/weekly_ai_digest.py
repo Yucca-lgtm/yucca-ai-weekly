@@ -353,7 +353,8 @@ def feishu_send_card_zh_cn(
 
             # 分隔线（最后一条不加）
             if i != len(items):
-                elements.append({"tag": "divider"})
+                # 飞书卡片 schema 2.0 分割线组件 tag 为 hr
+                elements.append({"tag": "hr"})
 
     body = {
         "msg_type": "interactive",
