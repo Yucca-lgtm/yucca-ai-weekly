@@ -5,6 +5,8 @@
 环境变量：
   FEISHU_WEBHOOK    必填
   MYMEMORY_EMAIL      可选：在 https://mymemory.translated.net 登记邮箱可提高 MyMemory 免费额度
+  FEISHU_CARD_TEMPLATE_ID   可选：若设置则用「卡片模板（方案A）」发送（推荐，美观且可复用）
+  FEISHU_CARD_TEMPLATE_VERSION  可选：模板版本号（如 1.0.0），不填默认用最新
 """
 
 from __future__ import annotations
@@ -197,6 +199,125 @@ def fetch_page_title_and_text(url: str) -> tuple[str | None, str]:
     return title, extracted
 
 
+def fetch_page_published(url: str) -> datetime | None:
+    """尽量从页面 meta/time 里提取发布时间（UTC）。失败则返回 None。"""
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+    try:
+        with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True, headers=headers) as client:
+            r = client.get(url)
+            r.raise_for_status()
+            raw = r.text
+    except Exception:
+        return None
+
+    soup = BeautifulSoup(raw, "lxml")
+    for key in ("article:published_time", "og:published_time"):
+        m = soup.find("meta", property=key)
+        if m and m.get("content"):
+            try:
+                dt = datetime.fromisoformat(m["content"].replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc)
+            except Exception:
+                pass
+    # 常见 time 标签
+    t = soup.find("time")
+    if t:
+        for attr in ("datetime", "content"):
+            v = t.get(attr)
+            if v:
+                try:
+                    dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt.astimezone(timezone.utc)
+                except Exception:
+                    pass
+        txt = strip_html(t.get_text(" "))
+        # 兜底：2026-04-02 / 2026/04/02
+        m = re.search(r"(20\\d{2})[-/](\\d{1,2})[-/](\\d{1,2})", txt)
+        if m:
+            try:
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                return datetime(y, mo, d, tzinfo=timezone.utc)
+            except Exception:
+                pass
+    return None
+
+
+def collect_aibase_news(url: str, limit: int = 30) -> list[dict[str, Any]]:
+    """抓取 AIbase 列表页（不依赖 RSS）。列表顺序作为弱热度信号。"""
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+    try:
+        with httpx.Client(timeout=FETCH_TIMEOUT, follow_redirects=True, headers=headers) as client:
+            r = client.get(url)
+            r.raise_for_status()
+            raw = r.text
+    except Exception:
+        return []
+
+    soup = BeautifulSoup(raw, "lxml")
+    out: list[dict[str, Any]] = []
+    # 页面结构：### 标题 + [摘要](链接)
+    for h in soup.find_all(["h3", "h4"]):
+        title = strip_html(h.get_text(" "))
+        if not title:
+            continue
+        a = h.find_next("a")
+        if not a or not a.get("href"):
+            continue
+        link = a["href"].strip()
+        if not link.startswith("http"):
+            link = "https://www.aibase.com" + link
+        summary = strip_html(a.get_text(" "))
+        out.append({"rss_title": title, "link": link, "rss_summary": summary})
+        if len(out) >= limit:
+            break
+    # 弱热度：越靠前越热
+    for idx, it in enumerate(out):
+        it["popularity"] = max(0, limit - idx)
+    return out
+
+
+def collect_hot36kr(url: str, limit: int = 30) -> list[dict[str, Any]]:
+    """36氪热榜聚合接口（含 statRead 等字段）。"""
+    try:
+        with httpx.Client(timeout=FETCH_TIMEOUT, headers={"User-Agent": USER_AGENT}) as client:
+            r = client.get(url)
+            r.raise_for_status()
+            data = r.json()
+    except Exception:
+        return []
+
+    # 兼容不同字段结构：优先 data 列表，否则尝试 result/list
+    items = data.get("data") or data.get("result") or data.get("list") or []
+    out: list[dict[str, Any]] = []
+    for it in items:
+        title = strip_html(it.get("widgetTitle") or it.get("title") or "")
+        link = it.get("url") or it.get("link") or it.get("itemUrl") or ""
+        if not title or not link:
+            continue
+        if link.startswith("//"):
+            link = "https:" + link
+        if not link.startswith("http"):
+            continue
+        # 阅读数作为热度（兜底用排序）
+        pop = it.get("statRead") or it.get("read") or it.get("hot") or 0
+        try:
+            pop = int(pop)
+        except Exception:
+            pop = 0
+        out.append({"rss_title": title, "link": link, "rss_summary": "", "popularity": pop})
+        if len(out) >= limit:
+            break
+    # 如果没有阅读数，用排序做弱热度
+    if out and all((x.get("popularity") or 0) == 0 for x in out):
+        for idx, it in enumerate(out):
+            it["popularity"] = max(0, limit - idx)
+    return out
+
+
 def rss_fallback_summary(entry: Any) -> str:
     summ = getattr(entry, "summary", None) or getattr(entry, "description", "") or ""
     summ = strip_html(summ)
@@ -301,6 +422,60 @@ def excerpt_to_zh_one_line(excerpt: str) -> str:
 def _escape_md(text: str) -> str:
     # 飞书卡片 markdown 对特殊字符较宽容，这里做最基础的清理，避免换行失控。
     return (text or "").replace("\r", "").strip()
+
+
+def _build_items_markdown(items: list[dict[str, str]]) -> str:
+    """
+    生成用于卡片模板变量的 markdown 字符串（更紧凑、好看）。
+    注意：颜色使用 <font> 属于卡片 markdown 的能力；不同端表现可能略有差异。
+    """
+    blocks: list[str] = []
+    for i, it in enumerate(items, 1):
+        t = _escape_md(it.get("title", ""))
+        s = _escape_md(it.get("source", ""))
+        summ = _escape_md(it.get("summary", ""))
+        url = _escape_md(it.get("url", ""))
+
+        lines: list[str] = [f"**{i}. 《{t}》**"]
+        if s:
+            lines.append(f"<font color='grey'>来源：{s}</font>")
+        if summ:
+            lines.append(summ)
+        if url:
+            lines.append(f"[查看原文]({url})")
+        blocks.append("\n".join(lines))
+    return "\n\n---\n\n".join(blocks)
+
+
+def feishu_send_card_template_zh_cn(
+    webhook: str,
+    template_id: str,
+    template_version: str | None,
+    template_variable: dict[str, Any],
+) -> None:
+    """
+    方案A：使用飞书「卡片模板」发送（CardKit 发布的 template_id）。
+    参考官方文档：使用自定义机器人发送飞书卡片
+    """
+    data: dict[str, Any] = {
+        "template_id": template_id,
+        "template_variable": template_variable,
+    }
+    if template_version:
+        data["template_version_name"] = template_version
+
+    body = {"msg_type": "interactive", "card": {"type": "template", "data": data}}
+
+    with httpx.Client(timeout=30.0) as client:
+        r = client.post(webhook, json=body)
+        r.raise_for_status()
+        try:
+            resp = r.json()
+        except json.JSONDecodeError:
+            return
+        code = resp.get("code")
+        if code is not None and int(code) != 0:
+            raise RuntimeError(f"Feishu API error: {resp}")
 
 
 def feishu_send_card_zh_cn(
@@ -415,6 +590,58 @@ def main() -> int:
             prio = int(feed.get("priority", 50))
         except (TypeError, ValueError):
             prio = 50
+        kind = str(feed.get("kind") or "rss").strip().lower()
+
+        if kind == "aibase_html":
+            for it in collect_aibase_news(url, limit=40):
+                link = it["link"]
+                title = it["rss_title"]
+                rss_sum = it.get("rss_summary", "")
+                if not is_ai_related(title, rss_sum, link):
+                    continue
+                # AIbase 列表页没有稳定发布时间字段：尝试从文章页提取；失败则当作“本周”弱信号
+                dt = fetch_page_published(link) or now
+                if dt < cutoff:
+                    continue
+                candidates.append(
+                    {
+                        "link": link,
+                        "rss_title": title,
+                        "published": dt,
+                        "feed_label": label,
+                        "priority": prio,
+                        "popularity": int(it.get("popularity") or 0),
+                        "entry": None,
+                    }
+                )
+                time.sleep(0.3)
+            continue
+
+        if kind == "hot36kr_api":
+            for it in collect_hot36kr(url, limit=40):
+                link = it["link"]
+                title = it["rss_title"]
+                rss_sum = it.get("rss_summary", "")
+                if not is_ai_related(title, rss_sum, link):
+                    continue
+                dt = fetch_page_published(link) or now
+                if dt < cutoff:
+                    continue
+                candidates.append(
+                    {
+                        "link": link,
+                        "rss_title": title,
+                        "published": dt,
+                        "feed_label": label,
+                        "priority": prio,
+                        "popularity": int(it.get("popularity") or 0),
+                        "entry": None,
+                    }
+                )
+                time.sleep(0.3)
+            continue
+
+        # 默认 RSS
         try:
             parsed = feedparser.parse(url)
         except Exception as e:
@@ -438,16 +665,63 @@ def main() -> int:
                     "published": dt,
                     "feed_label": label,
                     "priority": prio,
+                    "popularity": 0,
                     "entry": entry,
                 }
             )
         time.sleep(0.3)
 
-    # 热点排序：发布时间越新越靠前；同一时间戳下优先「priority」更高的来源（行业权威/配置权重）
-    candidates.sort(
-        key=lambda x: (x["published"].timestamp(), x["priority"]),
-        reverse=True,
-    )
+    # 热点排序：发布时间（新） + 来源权重 + 热度（阅读/榜单/位置） + 主题关键词命中
+    def _kw_bonus(title: str, summary: str, link: str) -> int:
+        blob = f"{title} {summary} {link}".lower()
+        # 你关心的高权重主题
+        strong = (
+            "智能体",
+            "agent",
+            "agentic",
+            "大模型",
+            "多模态",
+            "qwen",
+            "千问",
+            "glm",
+            "智谱",
+            "豆包",
+            "doubao",
+            "openai",
+            "claude",
+            "gemini",
+            "nvidia",
+            "黄仁勋",
+            "马斯克",
+            "musk",
+            "火山引擎",
+            "混元",
+            "盘古",
+            "文心",
+            "ernie",
+            "ai办公",
+            "ai 办公",
+            "workbuddy",
+            "copilot",
+        )
+        bonus = 0
+        for k in strong:
+            if k.lower() in blob:
+                bonus += 8
+        return bonus
+
+    def _score(c: dict[str, Any]) -> float:
+        recency = c["published"].timestamp()
+        pr = float(c.get("priority") or 0)
+        pop = float(c.get("popularity") or 0)
+        # 让 pop 不至于把“新消息”完全碾压：做 log 压缩
+        pop_adj = 0.0
+        if pop > 0:
+            pop_adj = 20.0 * (1.0 + (pop ** 0.5) / 100.0)
+        kw = float(_kw_bonus(c["rss_title"], rss_fallback_summary(c["entry"]) if c.get("entry") else "", c["link"]))
+        return recency + pr * 1000.0 + pop_adj * 1000.0 + kw * 1000.0
+
+    candidates.sort(key=_score, reverse=True)
 
     seen: set[str] = set()
     out: list[dict[str, str]] = []
@@ -471,7 +745,7 @@ def main() -> int:
             continue
 
         display_title = page_title if len(page_title) >= len(rss_title) * 0.5 else rss_title
-        rss_sum = rss_fallback_summary(c["entry"])
+        rss_sum = rss_fallback_summary(c["entry"]) if c.get("entry") else ""
         raw_excerpt = extract_excerpt_sentence(body_text, rss_sum)
         if not raw_excerpt.strip():
             raw_excerpt = rss_sum
@@ -495,14 +769,43 @@ def main() -> int:
 
     week_str = local_now.strftime("%Y-%m-%d")
     post_title = f"AI周报 {week_str}"
+    template_id = os.environ.get("FEISHU_CARD_TEMPLATE_ID", "").strip()
+    template_version = os.environ.get("FEISHU_CARD_TEMPLATE_VERSION", "").strip() or None
+    print(
+        json.dumps(
+            {
+                "send_mode": "template" if template_id else "fallback_card",
+                "template_id_set": bool(template_id),
+                "template_version": template_version or "",
+            },
+            ensure_ascii=False,
+        )
+    )
 
     if not out:
         notice = "本周未从已配置 RSS 中筛出足够新且标题校验通过的 AI 条目，请检查 config/rss_feeds.yaml 或网络。"
-        feishu_send_card_zh_cn(webhook, title=post_title, notice=notice)
+        if template_id:
+            feishu_send_card_template_zh_cn(
+                webhook,
+                template_id=template_id,
+                template_version=template_version,
+                template_variable={"date": week_str, "title": post_title, "notice": notice},
+            )
+        else:
+            feishu_send_card_zh_cn(webhook, title=post_title, notice=notice)
         print("Sent empty week notice.")
         return 0
 
-    feishu_send_card_zh_cn(webhook, title=post_title, items=out)
+    if template_id:
+        items_md = _build_items_markdown(out)
+        feishu_send_card_template_zh_cn(
+            webhook,
+            template_id=template_id,
+            template_version=template_version,
+            template_variable={"date": week_str, "title": post_title, "items_md": items_md},
+        )
+    else:
+        feishu_send_card_zh_cn(webhook, title=post_title, items=out)
     print(json.dumps({"ok": True, "count": len(out)}, ensure_ascii=False))
     return 0
 
