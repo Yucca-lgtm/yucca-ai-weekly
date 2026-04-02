@@ -73,8 +73,46 @@ _AI_HINTS = (
     "机器学习",
     "大模型",
     "生成式",
+    "多模态",
+    "智能体",
+    "agent",
+    "agentic",
+    "workflow",
+    "copilot",
+    "ai办公",
+    "ai 办公",
+    "ai助手",
+    "ai 助手",
+    "办公自动化",
+    "效率工具",
+    "知识库",
+    "rag",
     "智谱",
     "文心",
+    "通义",
+    "千问",
+    "豆包",
+    "混元",
+    "盘古",
+    "昆仑",
+    "kimi",
+    "月之暗面",
+    "minimax",
+    "deepseek",
+    "深度求索",
+    "glm",
+    "qwen",
+    "ernie",
+    "doubao",
+    "hunyuan",
+    "pangu",
+    "百度",
+    "阿里",
+    "腾讯",
+    "字节",
+    "火山引擎",
+    "华为",
+    "小米",
 )
 
 
@@ -260,8 +298,54 @@ def excerpt_to_zh_one_line(excerpt: str) -> str:
     return f"【摘要暂以英文呈现】{short}"
 
 
-def feishu_send_text(webhook: str, text: str) -> None:
-    body = {"msg_type": "text", "content": {"text": text}}
+def feishu_send_post_zh_cn(
+    webhook: str,
+    title: str,
+    items: list[dict[str, str]] | None = None,
+    notice: str | None = None,
+) -> None:
+    """
+    使用飞书「post」富文本消息，支持加粗与可点击链接。
+    items: [{title, source, summary, url}]
+    """
+    content: list[list[dict[str, Any]]] = []
+
+    if notice:
+        content.append([{"tag": "text", "text": notice}])
+    else:
+        assert items is not None
+        for i, it in enumerate(items, 1):
+            # 标题（加粗）
+            content.append(
+                [
+                    {"tag": "text", "text": f"{i}. ", "style": ["bold"]},
+                    {"tag": "text", "text": f"《{it['title']}》", "style": ["bold"]},
+                ]
+            )
+            # 来源
+            if it.get("source"):
+                content.append([{"tag": "text", "text": f"来源：{it['source']}"}])
+            # 一句话摘要
+            if it.get("summary"):
+                content.append([{"tag": "text", "text": it["summary"]}])
+            # 原文链接（可点击）
+            url = it.get("url", "").strip()
+            if url:
+                content.append([{"tag": "a", "text": url, "href": url}])
+            content.append([{"tag": "text", "text": ""}])
+
+    body = {
+        "msg_type": "post",
+        "content": {
+            "post": {
+                "zh_cn": {
+                    "title": title,
+                    "content": content,
+                }
+            }
+        },
+    }
+
     with httpx.Client(timeout=30.0) as client:
         r = client.post(webhook, json=body)
         r.raise_for_status()
@@ -375,26 +459,15 @@ def main() -> int:
         local_now = datetime.now(timezone.utc) + timedelta(hours=8)
 
     week_str = local_now.strftime("%Y-%m-%d")
-    header = (
-        f"AI周报（简体中文）· {week_str}\n"
-        f"共 {len(out)} 条｜近 7 天｜免费主流 AI 资讯源（priority 权重）+ 发布时间排序｜关键词：AI周报\n\n"
-    )
+    post_title = f"AI周报 {week_str}"
 
     if not out:
-        header += "本周未从已配置 RSS 中筛出足够新且标题校验通过的条目，请检查 config/rss_feeds.yaml 或网络。"
-        feishu_send_text(webhook, header)
+        notice = "本周未从已配置 RSS 中筛出足够新且标题校验通过的 AI 条目，请检查 config/rss_feeds.yaml 或网络。"
+        feishu_send_post_zh_cn(webhook, title=post_title, notice=notice)
         print("Sent empty week notice.")
         return 0
 
-    lines = [header]
-    for i, item in enumerate(out, 1):
-        lines.append(f"{i}. 《{item['title']}》")
-        lines.append(f"来源：{item['source']}")
-        lines.append(item["summary"])
-        lines.append(item["url"])
-        lines.append("")
-    text = "\n".join(lines).strip()
-    feishu_send_text(webhook, text)
+    feishu_send_post_zh_cn(webhook, title=post_title, items=out)
     print(json.dumps({"ok": True, "count": len(out)}, ensure_ascii=False))
     return 0
 

@@ -1,53 +1,39 @@
-# 免费 RSS：优先选用全球 AI 行业流量与公信力常居前列的媒体/机构官方源。
-# priority：0–100，数值越大越优先（与发布时间共同决定「热点」排序：先按新，再按来源权重）。
-# 可按团队偏好增删；失效链接请自行替换为站点当前提供的 RSS。
+# 免费 RSS（优先国内）：覆盖「人工智能/大厂 AI/最新大模型/AI 智能体/AI 办公与生产力」。
+# priority：0–100，数值越大越优先（排序规则：先按发布时间新旧，再按来源权重）。
+# 说明：
+# - 尽量用站点官方 RSS；少量站点若无官方 RSS，可用公开的公众号转 RSS（第三方）补齐。
+# - 若某源偶发不可用，可先降低 priority 或注释掉。
 
 feeds:
-  # --- 一线通讯社 / 头部科技媒体（全球流量与引用率常居前；均为免费公开 RSS）---
-  - url: https://feeds.bbci.co.uk/news/technology/rss.xml
-    label: BBC 科技
-    priority: 93
-  - url: https://www.theguardian.com/technology/rss
-    label: The Guardian 科技
-    priority: 91
-  - url: https://www.technologyreview.com/topic/artificial-intelligence/feed/
-    label: MIT Technology Review（AI）
-    priority: 93
-  - url: https://techcrunch.com/category/artificial-intelligence/feed/
-    label: TechCrunch AI
-    priority: 91
-  - url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
-    label: The Verge（AI）
-    priority: 90
-  - url: https://venturebeat.com/category/ai/feed/
-    label: VentureBeat AI
-    priority: 88
-  - url: https://arstechnica.com/tag/artificial-intelligence/feed/
-    label: Ars Technica（AI）
-    priority: 86
-  - url: https://www.wired.com/feed/tag/ai/latest/rss
-    label: WIRED（AI）
-    priority: 85
-  - url: https://www.zdnet.com/topic/artificial-intelligence/rss.xml
-    label: ZDNet（AI）
-    priority: 84
-  - url: https://spectrum.ieee.org/topic/artificial-intelligence/rss/
-    label: IEEE Spectrum（AI）
-    priority: 83
+  # --- 国内 AI 垂直媒体（优先）---
+  - url: https://www.qbitai.com/feed
+    label: 量子位
+    priority: 98
+  - url: https://www.jiqizhixin.com/rss
+    label: 机器之心
+    priority: 97
 
-  # --- 厂商与实验室官方（产品/研究首发）---
-  - url: https://openai.com/news/rss.xml
-    label: OpenAI
+  # 新智元（若官方 RSS 不稳定，可用公开的公众号转 RSS 作为补充）
+  - url: https://wechat2rss.bestblogs.dev/feed/17f0b2b14e1ae24309b5dcb229ebd0aa4c1c2782.xml
+    label: 新智元（公众号）
     priority: 92
-  - url: https://deepmind.google/blog/rss.xml
-    label: Google DeepMind
+
+  # --- 国内综合科技/创投（通过脚本 AI 关键词过滤，只取 AI 相关）---
+  - url: https://36kr.com/feed-article
+    label: 36氪（文章）
     priority: 90
-  - url: https://blog.google/technology/ai/rss/
-    label: Google AI Blog
-    priority: 89
-  - url: https://www.anthropic.com/rss.xml
-    label: Anthropic
-    priority: 89
-  - url: https://nvidianews.nvidia.com/rss.xml
-    label: NVIDIA News
+  - url: https://36kr.com/feed-newsflash
+    label: 36氪（快讯）
     priority: 88
+  - url: https://www.huxiu.com/rss/0.xml
+    label: 虎嗅
+    priority: 87
+  - url: https://www.infoq.cn/rss/
+    label: InfoQ 中文
+    priority: 86
+  - url: https://www.ithome.com/rss/
+    label: IT之家
+    priority: 82
+
+  # --- 国内大厂与平台（可按团队关注增删；同样走关键词过滤）---
+  # 如你希望把“阿里/百度/字节/腾讯/华为”等官方新闻源也加入，我可以再补一批可用 RSS。
