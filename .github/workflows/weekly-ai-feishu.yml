@@ -50,7 +50,13 @@ jobs:
           MYMEMORY_EMAIL: ${{ secrets.MYMEMORY_EMAIL }}
           FEISHU_CARD_TEMPLATE_ID: ${{ secrets.FEISHU_CARD_TEMPLATE_ID }}
           FEISHU_CARD_TEMPLATE_VERSION: ${{ secrets.FEISHU_CARD_TEMPLATE_VERSION }}
-        run: python scripts/weekly_ai_digest.py --mode "${{ github.event.inputs.mode || 'weekly' }}"
+        # schedule 事件没有 workflow_dispatch 的 inputs，勿用 github.event.inputs.mode（易为空或解析异常）
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            python scripts/weekly_ai_digest.py --mode weekly
+          else
+            python scripts/weekly_ai_digest.py --mode "${{ github.event.inputs.mode }}"
+          fi
 
       - name: Upload candidates artifacts (only for candidates mode)
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'candidates' }}
