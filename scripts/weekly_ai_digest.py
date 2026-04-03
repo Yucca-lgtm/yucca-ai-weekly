@@ -597,24 +597,24 @@ def translate_libretranslate_en_to_zh(text: str) -> str | None:
 
 
 def excerpt_to_zh_one_line(excerpt: str) -> str:
-    """将摘录统一为一句简体中文：已是中文则截断；英文则免费机翻。"""
+    """将摘录统一为一句简体中文：中文/机翻中文各 ≤50 字；翻译失败则英文前缀 + 正文 ≤80 字符。"""
     excerpt = excerpt.strip()
     if not excerpt:
         return "（暂无可用摘要，请直接阅读原文。）"
     if has_cjk(excerpt):
         one = excerpt.replace("\n", " ").strip()
-        if len(one) > 160:
-            one = one[:160] + "…"
+        if len(one) > 50:
+            one = one[:50] + "…"
         return one
     zh = translate_mymemory_en_to_zh(excerpt)
     time.sleep(1.0)
     if not zh:
         zh = translate_libretranslate_en_to_zh(excerpt)
     if zh:
-        if len(zh) > 180:
-            zh = zh[:180] + "…"
+        if len(zh) > 50:
+            zh = zh[:50] + "…"
         return zh
-    short = excerpt[:200] + ("…" if len(excerpt) > 200 else "")
+    short = excerpt[:80] + ("…" if len(excerpt) > 80 else "")
     return f"【摘要暂以英文呈现】{short}"
 
 
