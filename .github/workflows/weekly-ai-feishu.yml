@@ -1,5 +1,6 @@
-# 每周五北京时间 10:00 向飞书群推送 AI 周报（简体中文）
-# GitHub Actions 使用 UTC：北京时间周五 10:00 = UTC 周五 02:00
+# 每周五北京时间 10:20 向飞书群推送 AI 周报（简体中文），长期重复。
+# GitHub Actions 的 schedule 只用 UTC：北京时间周五 10:20 = UTC 周五 02:20。
+# 无法指定「从某日才开始」；合并到默认分支后，在之后每个周五 02:20 UTC 触发（可能晚几分钟）。
 #
 # 仓库 Settings → Secrets and variables → Actions 中新建：
 #   FEISHU_WEBHOOK     必填：飞书自定义机器人 Webhook 完整地址
@@ -11,8 +12,8 @@ name: Weekly AI digest to Feishu
 
 on:
   schedule:
-    # UTC 周五 02:00 = 北京时间周五 10:00
-    - cron: "0 2 * * 5"
+    # UTC 周五 02:20 = 北京时间周五 10:20
+    - cron: "20 2 * * 5"
   workflow_dispatch:
     inputs:
       mode:
